@@ -1,0 +1,412 @@
+---
+title: "Second primary tumor (Fine and Gray model) of patients with different BRCA1 status and BRCA1-like status: results from multiple imputation"
+author: "Yuwei Wang"
+date:  "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+  toc_depth: 3  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Read me
+This script codes the results from the study entitled Long-term outcomes of young, node-negative, chemotherapy-naive, triple-negative breast cancer patients according to BRCA1 status. The script generated results of incidence of second primary tumors in **Table 2. (Subdistribution) hazard ratios for 15-year overall survival, distant recurrence-free survival, and second primary tumors according to BRCA1 status, based on multiple-imputed data**, **Supplementary Table S8. Subdistribution hazard ratios for second primary tumors according to BRCA1 status, based on multiple-imputed data, using Fine and Gray competing risk models with distant recurrence and death as competing events**, and **Supplementary Table S10. Univariable (subdistribution) hazard ratios according to BRCA1-like status**.
+
+## Load the libraries and functions
+```{r load.libraries and functions, message=F, warning=F}
+library('readxl')
+library('rms')
+library('ggplot2')
+library('plyr')
+library('dplyr')
+library('xtable')
+library('tidyr')
+library("stringr")
+library('lubridate')
+library('riverplot')
+library("knitr")
+library("survminer")
+library('survival')
+library("xfun")
+library("table1")
+library("cmprsk")
+library("mice")
+library("tidyverse")
+library("mstate")
+library("VIM")
+library("mstate")
+library("PHInfiniteEstimates")#for Aalen-Johansen estimator
+res_table<-function(X){
+  sumX<-summary(pool(X), conf.int = TRUE) #summary the pooled model results
+  res<-c()
+  row<-nrow(sumX)
+  for (i in c(1:row)){ #make the (exp) results into a matrix format(round(a), nsmall = 2)
+    res0 <- c(format(round(exp(sumX[i,2]), 2), nsmall = 2), 
+            format(round(exp(sumX[i,7]), 2), nsmall = 2),
+            format(round(exp(sumX[i,8]), 2), nsmall = 2))
+    res <- append(res, res0)}
+    HRs <- matrix(res, nrow=row, byrow=T)
+    groupHRs <- paste0(HRs[,1], " (", HRs[,2], "-", HRs[,3],")")
+  cbind(as.character(sumX[, 1]), groupHRs) #bind the row names (variable names) to the corresponding results
+  
+}
+```
+res_table is a function to extract hazard ratios and confidence intervals from the summary of the pooled results of the survival analysis.
+
+## Multiple imputation
+
+```{r load.data, include=FALSE}
+TNBC<-read.csv("/DATA/users/yu.wang/7_BRCAness/long-term survival according to BRCA1 status/dataset/TNBC485_BRCA1statusupdate_in_August_2022.csv")
+TNBC$X<-NULL
+
+TNBC$BRCA2[which(TNBC$BRCA2 == "tBRCA2m")] <- NA
+
+TNBCw15<-crprep(Tstop="time15.drfs", status="drfs15", trans=c(1,2), cens=0, id="palga_nr", data=TNBC)
+TNBCw15.spt<-TNBCw15 %>%
+  filter(failcode == 2)
+fit <- coxph(Surv(Tstart, Tstop, status==2) ~ 1, data=TNBCw15.spt, weights = weight.cens)
+cumhaz <- basehaz(fit, centered = FALSE)
+TNBC <- merge(TNBC, cumhaz, by.x = "time15.drfs", by.y = "time", all.x = T, all.y = T)
+TNBC$spt15 <- 0
+TNBC$spt15[which(TNBC$drfs15 == 2)] <- 1
+TNBC$spt15[which(TNBC$drfs15 == 1)] <- 2
+table(TNBC$drfs15, TNBC$spt15)
+table(TNBC$spt15)#cause 1 is the cause of interest, i.e. second priamry tumor
+
+
+AJestimatorlist <- aalenjohansen(TNBC$time15.drfs, TNBC$spt15)
+AJcumhaz <- -log(AJestimatorlist$surv)
+AJcumhaz <- AJcumhaz[2: length(AJcumhaz)]
+#baseline cumulative subhazard by Aalen-Johansen estimator
+AJtime <- AJestimatorlist$time[2:length(AJestimatorlist$time)]
+AJestimator <- cbind(AJtime, AJcumhaz)
+check <- cbind(AJestimator, cumhaz)
+check$diff <- check$AJcumhaz - check$hazard
+TNBC <- merge(TNBC, AJestimator, by.x = "time15.drfs", by.y = "AJtime", all.x = T, all.y = T)
+summary(TNBC$AJcumhaz)
+
+
+
+table(TNBC$push.bordercat4)
+TNBC$push.bordercat4<-factor(TNBC$push.bordercat4)
+table(TNBC$FIBROTIC_FOCUS_REVISION_E1_C1)
+
+tobeimpu<-c("palga_nr","incyear","T_LEEFT",
+           "tumorsize","tumorsize.cat","Grade","HISTOLOGICAL_SUBTYPErec","ER.num", "PR.num",
+           "push.bordercat4","lym.vas.inv", "sTILs","FIBROTIC_FOCUS_REVISION_E1_C1","centr_necrosis_cat",
+           "BRCA1like","gBRCA1","sBRCA1","BRCA2","BPM",
+           "Surgery","Radiotherapy", "AJcumhaz", "spt15", "time15.drfs")
+data<-TNBC[, tobeimpu]
+```
+
+```{r MI_prepare the variables, include=FALSE}
+data$gBRCA1<-as.factor(data$gBRCA1)
+data$sBRCA1<-as.factor(data$sBRCA1)
+data$BPM<-as.factor(data$BPM)
+data$BRCA1like<-as.factor(data$BRCA1like)
+data$BRCA2<-as.factor(data$BRCA2)
+data$Radiotherapy<-as.factor(data$Radiotherapy)
+data$lym.vas.inv<-as.factor(data$lym.vas.inv)
+table(TNBC$tumorsize.cat[which(is.na(TNBC$tumorsize))])#we can do a conditional imputation
+data$tumorsize.cat <- as.numeric(as.factor(data$tumorsize.cat))
+data$tumorsize.cat[which(is.na(data$tumorsize.cat))]<-999
+table(data$tumorsize.cat)
+#1->1(1mm-20mm); 2->1a(1-5mm); 3->1B(6-10mm); 4->1C(11-20mm); 5->2(21-50mm); 6->3(>50mm); 999->NA
+
+#before we impute the BRCA1 status, we first solve the missingness by the mutual exclusive assumption
+data$BPM[which(data$gBRCA1==1| data$sBRCA1==1)]<-0
+data$gBRCA1[which(data$BPM==1)]<-0
+data$sBRCA1[which(data$BPM==1)]<-0
+```
+
+
+```{r multiple-imputation, echo=T, results='hide'}
+ini <- mice(data, maxit=0, vis="monotone",print=FALSE) 
+meth <- ini$meth
+meth
+meth["push.bordercat4"]<-"polr"
+
+pred<-quickpred(data, exclude=c("palga_nr", "time15.drfs", "tumorsize.cat", "ER.num", "PR.num"), 
+                include = c("tumorsize","Grade","HISTOLOGICAL_SUBTYPErec","push.bordercat4","lym.vas.inv",
+                            "sTILs","FIBROTIC_FOCUS_REVISION_E1_C1","centr_necrosis_cat",
+                            "gBRCA1","sBRCA1","BRCA2","BPM", "BRCA1like",
+                            "Surgery","Radiotherapy", "AJcumhaz","spt15"),
+                minpuc = 0.2, mincor = 0.1) 
+#pred#column shows if this variable predict the value of the row variable
+pred[c("tumorsize.cat"),] # all 0
+
+post<-ini$post
+post["tumorsize"] <-"imp[[j]][data$tumorsize.cat[!r[,j]]==1, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==1, i], c(1, 20));imp[[j]][data$tumorsize.cat[!r[,j]]==2, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==2, i], c(1, 5)); imp[[j]][data$tumorsize.cat[!r[,j]]==3, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==3, i], c(6, 10));imp[[j]][data$tumorsize.cat[!r[,j]]==4, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==4, i], c(11, 20));imp[[j]][data$tumorsize.cat[!r[,j]]==5, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==5, i], c(21, 50)); imp[[j]][data$tumorsize.cat[!r[,j]]==6, i] <- squeeze(imp[[j]][data$tumorsize.cat[!r[,j]]==6, i], c(51, 150))"
+
+post["BPM"]<-"imp[[j]][data$gBRCA1[!r[,j]]==1, i] <- 0; imp[[j]][data$sBRCA1[!r[,j]]==1, i] <- 0"
+
+
+## Impute
+seed <- 11200 # to reproduce results
+#impute <- mice(data=data, m=1, seed=seed, meth=meth, pred=pred, maxit=5, post = post, vis="monotone")
+impute <- mice(data=data, m=20, seed=seed, meth=meth, pred=pred, maxit=25, post = post, vis="monotone")
+#vis = "monotone means that the imputation started from the most complete variable
+
+impTNBC<-mice::complete(impute, "long", FALSE)
+```
+
+```{r impuation plot}
+plot(impute, c("BRCA1like","gBRCA1","sBRCA1","BPM","sTILs","tumorsize","push.bordercat4"))
+```
+
+### Redefine variables for analysis after multiple imputation
+```{r redefining variables}
+impTNBC <- mice::complete(impute, "long", FALSE) %>%
+  mutate(tumorsize.cat2 = ifelse(tumorsize <= 20, "1", "2-3"),
+         Grade.cat2 = ifelse(Grade == "Grade 3", 1, 0),
+         hist_subtype.cat3 = ifelse(HISTOLOGICAL_SUBTYPErec=="Carcinoma NST" | HISTOLOGICAL_SUBTYPErec=="Metaplastic carcinoma", 
+                                   HISTOLOGICAL_SUBTYPErec, "Other"),
+         treatment.cat3 = ifelse(str_detect(Surgery,"lumpectomy") & Radiotherapy==1, "lumpectomy + RT",
+                               ifelse(str_detect(Surgery,"mastectomy") & Radiotherapy==0, "mastectomy","Other")),
+         sBRCA1 = if_else(gBRCA1 == 0 & sBRCA1 == 1, 1, 0), #use if_else to avoid the problem when converting factors
+         BRCA1BPM = ifelse(BPM == 1, "BPM",
+                           ifelse(gBRCA1 == 1, "gBRCA1m",
+                                  ifelse(sBRCA1 == 1, "sBRCA1m",
+                                         ifelse(BPM == 0 & gBRCA1 == 0 & sBRCA1 == 0, "BRCA1 non-altered", NA))))) %>%
+  mutate(BRCA1BPM = relevel(factor(BRCA1BPM), ref = ("BRCA1 non-altered")),
+         dum.nonaltered = ifelse(BRCA1BPM == "BRCA1 non-altered", 1, 0),
+         drfs15 = ifelse(spt15 == 1, 2,
+                         ifelse(spt15 == 2, 1, 0)))
+```
+
+```{r number of patients, include=FALSE}
+totalnum <- filter(impTNBC, impTNBC$BRCA2 != "gBRCA2m")
+median(c(table(totalnum$.imp)))#478.5
+median(c(table(totalnum$.imp, totalnum$incyear <= 1997)[, 2]))
+median(c(table(totalnum$.imp, totalnum$ER.num == 0)[, 2]))
+median(c(table(totalnum$.imp, totalnum$BRCA1like == 1)[, 2]))
+```
+
+```{r imputed data set list}
+impTNBCw15 <- crprep(Tstop="time15.drfs", status="drfs15", trans = c(1,2), cens=0, id="palga_nr",
+                              keep = c(".imp","T_LEEFT", "incyear","BRCA1BPM","gBRCA1", "sBRCA1", "BPM",
+                                     "BRCA2","sTILs","tumorsize.cat2","Grade.cat2","ER.num", "PR.num",
+                                     "lym.vas.inv", "hist_subtype.cat3", "treatment.cat3", "BRCA1like"),
+                              data = impTNBC)
+
+impTNBCw15.spt.all <- impTNBCw15 %>%
+  filter(failcode == 2 & BRCA2 != "gBRCA2m")
+
+implist_TNBCw15.spt.all <- list()
+for(i in (1:20)){
+  implist_TNBCw15.spt.all0 <- filter(impTNBCw15.spt.all, impTNBCw15.spt.all$.imp == i)
+  implist_TNBCw15.spt.all <- append(implist_TNBCw15.spt.all , list(implist_TNBCw15.spt.all0))}
+```
+
+
+## Incidence of second primary tumors according to BRCA1 status and BRCA1-like status
+### According to BRCA1 statuses 
+The codes below return the results from Supplementary Table S8 (All patients).
+
+Results from univariable analysis with only BRCA1 status.
+```{r SPT BRCA1 status}
+####univariable
+coxzph.uni.BRCA1BPM.all<- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+                          cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM, weights=weight.cens, data=x), terms = F)
+                          }))
+coxzph.uni.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+
+uni.BRCA1BPM.all <- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM, weights=weight.cens, data=x)
+}))
+summary(pool(uni.BRCA1BPM.all))
+res_table(uni.BRCA1BPM.all)
+
+#add interaction term
+multi.BRCA1BPM.inter <- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM  + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3 + BPM:sTILs + gBRCA1:sTILs , weights=weight.cens, data=x)
+}))
+summary(pool(multi.BRCA1BPM.inter))
+#No significant terms
+
+coxzph.multi.BRCA1BPM.all <- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x), terms = F)
+}))
+coxzph.multi.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.all$analyses[[sample(1:20, 1)]]
+
+multi.BRCA1BPM.all <- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM  + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3  , weights=weight.cens, data=x)
+}))
+summary(pool(multi.BRCA1BPM.all))
+res_table(multi.BRCA1BPM.all)
+
+```
+
+### According to BRCA1-like statuses 
+
+The codes return the results for Supplementary Table S10.
+Results from univariable analysis only including BRCA1-like status.
+```{r SPT BRCA1like status}
+####univariable
+coxzph.uni.all<- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1like, weights=weight.cens, data=x), terms = F)
+}))
+coxzph.uni.all$analyses[[sample(1:20, 1)]]
+coxzph.uni.all$analyses[[sample(1:20, 1)]]
+coxzph.uni.all$analyses[[sample(1:20, 1)]]
+#ok
+
+os.uni.BRCA1like <- as.mira(lapply(implist_TNBCw15.spt.all, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1like , weights=weight.cens, data=x)
+}))
+summary(pool(os.uni.BRCA1like))
+res_table(os.uni.BRCA1like)
+```
+
+## Sensitivity analysis when inlcuding women diagnosed before 1997
+The codes below return the results of Supplementary Table S8 (Patients diagnosed from 1989 - 1997).
+```{r imputed data set list 1989-1997}
+impTNBCw15.spt.1997 <- impTNBCw15 %>%
+  filter(failcode == 2 & BRCA2 != "gBRCA2m" & incyear <= 1997)
+
+implist_TNBCw15.spt.1997 <- list()
+for(i in (1:20)){
+  implist_TNBCw15.spt.19970 <- filter(impTNBCw15.spt.1997 , impTNBCw15.spt.1997$.imp == i)
+  implist_TNBCw15.spt.1997 <- append(implist_TNBCw15.spt.1997  , list(implist_TNBCw15.spt.19970))}
+
+####univariable
+coxzph.uni.BRCA1BPM.1997<- as.mira(lapply(implist_TNBCw15.spt.1997, function(x){
+                          cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM, weights=weight.cens, data=x), terms = F)
+                          }))
+coxzph.uni.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+#germline BRCA1m seems not very good, but global P value is ok
+
+uni.BRCA1BPM.1997 <- as.mira(lapply(implist_TNBCw15.spt.1997, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM , weights=weight.cens, data=x)
+}))
+summary(pool(uni.BRCA1BPM.1997))
+res_table(uni.BRCA1BPM.1997)
+
+
+coxzph.multi.BRCA1BPM.1997 <- as.mira(lapply(implist_TNBCw15.spt.1997, function(x){
+  cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x), terms = F)
+}))
+coxzph.multi.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.1997$analyses[[sample(1:20, 1)]]
+
+multi.BRCA1BPM.1997 <- as.mira(lapply(implist_TNBCw15.spt.1997, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM  + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x)
+}))
+summary(pool(multi.BRCA1BPM.1997))
+res_table(multi.BRCA1BPM.1997)
+```
+## Sensitivity analysis when including women with BRCA1like tumor
+The codes below return the results of Supplementary Table S8 (Patients with BRCA1-like tumors).
+```{r imputed data set list BRCA1like}
+impTNBCw15.spt.BRCA1like <- impTNBCw15 %>%
+  filter(failcode == 2 & BRCA2 != "gBRCA2m" & BRCA1like == 1)
+
+implist_TNBCw15.spt.BRCA1like <- list()
+for(i in (1:20)){
+  implist_TNBCw15.spt.BRCA1like0 <- filter(impTNBCw15.spt.BRCA1like , impTNBCw15.spt.BRCA1like$.imp == i)
+  implist_TNBCw15.spt.BRCA1like <- append(implist_TNBCw15.spt.BRCA1like  , list(implist_TNBCw15.spt.BRCA1like0))}
+
+####univariable
+coxzph.uni.BRCA1BPM.BRCA1like<- as.mira(lapply(implist_TNBCw15.spt.BRCA1like, function(x){
+                          cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM, weights=weight.cens, data=x), terms = F)
+                          }))
+coxzph.uni.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+
+uni.BRCA1BPM.BRCA1like <- as.mira(lapply(implist_TNBCw15.spt.BRCA1like, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM , weights=weight.cens, data=x)
+}))
+summary(pool(uni.BRCA1BPM.BRCA1like))
+res_table(uni.BRCA1BPM.BRCA1like)
+
+
+coxzph.multi.BRCA1BPM.BRCA1like <- as.mira(lapply(implist_TNBCw15.spt.BRCA1like, function(x){
+  cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x), terms = F)
+}))
+coxzph.multi.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.BRCA1like$analyses[[sample(1:20, 1)]]
+#overall OK
+multi.BRCA1BPM.BRCA1like <- as.mira(lapply(implist_TNBCw15.spt.BRCA1like, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x)
+}))
+summary(pool(multi.BRCA1BPM.BRCA1like))
+res_table(multi.BRCA1BPM.BRCA1like)
+```
+## Sensitivity analysis when including women with ER and PR expression in the tumor < 1%
+The codes below return the results of Supplementary Table S8 (Patients with ER and PR expression in the tumor < 1%).
+```{r imputed data set list cutoff}
+impTNBCw15.spt.cutoff <- impTNBCw15 %>%
+  filter(failcode == 2 & BRCA2 != "gBRCA2m" & ER.num == 0 & PR.num == 0)
+
+implist_TNBCw15.spt.cutoff <- list()
+for(i in (1:20)){
+  implist_TNBCw15.spt.cutoff0 <- filter(impTNBCw15.spt.cutoff , impTNBCw15.spt.cutoff$.imp == i)
+  implist_TNBCw15.spt.cutoff <- append(implist_TNBCw15.spt.cutoff  , list(implist_TNBCw15.spt.cutoff0))}
+
+####univariable
+coxzph.uni.BRCA1BPM.cutoff<- as.mira(lapply(implist_TNBCw15.spt.cutoff, function(x){
+                          cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM, weights=weight.cens, data=x), terms = F)
+                          }))
+coxzph.uni.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+coxzph.uni.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+
+uni.BRCA1BPM.cutoff <- as.mira(lapply(implist_TNBCw15.spt.cutoff, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM, weights=weight.cens, data=x)
+}))
+summary(pool(uni.BRCA1BPM.cutoff))
+res_table(uni.BRCA1BPM.cutoff)
+
+
+coxzph.multi.BRCA1BPM.cutoff <- as.mira(lapply(implist_TNBCw15.spt.cutoff, function(x){
+  cox.zph(coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x), terms = F)
+}))
+coxzph.multi.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+coxzph.multi.BRCA1BPM.cutoff$analyses[[sample(1:20, 1)]]
+
+multi.BRCA1BPM.cutoff <- as.mira(lapply(implist_TNBCw15.spt.cutoff, function(x){
+  coxph(Surv(Tstart, Tstop, status==2) ~ gBRCA1 + sBRCA1 + BPM + sTILs + tumorsize.cat2 + Grade.cat2 +
+          hist_subtype.cat3 + lym.vas.inv + treatment.cat3, weights=weight.cens, data=x)
+}))
+summary(pool(multi.BRCA1BPM.cutoff))
+res_table(multi.BRCA1BPM.cutoff)
+```
+
+```{r res summary, include=FALSE}
+res.sum <- cbind(rbind(res_table(uni.BRCA1BPM.all), res_table(multi.BRCA1BPM.all)),
+                  rbind(res_table(uni.BRCA1BPM.1997),  res_table(multi.BRCA1BPM.1997)),
+                  rbind(res_table(uni.BRCA1BPM.cutoff),  res_table(multi.BRCA1BPM.cutoff)),
+                 rbind(res_table(uni.BRCA1BPM.BRCA1like), res_table(multi.BRCA1BPM.BRCA1like))) %>%
+  as_tibble() %>%
+  .[, c(1, 2, 4, 6, 8)] %>%
+      rename(Var = V1,
+         HR = groupHRs)
+res.sum
+```
+
+## Session information
+```{r sinfo}
+sessionInfo()
+```

@@ -1,0 +1,661 @@
+---
+title: "Survival and prognosis of patients with different BRCA1 status: results from Complete cases"
+author: "Yuwei Wang"
+date:  "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+  toc_depth: 3  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Read me
+This script codes the results from the study entitled Long-term outcomes of young, node-negative, chemotherapy-naive, triple-negative breast cancer patients according to BRCA1 status. The script generated **Table 1. Clinicopathological characteristics, BRCA1-like status, BRCA1 mRNA expression, treatment, and follow-up events of all patients and patients with different BRCA1 status**, **Figure 3. Overall survival (A), distant recurrence-free survival (B) and cumulative incidence of second primary tumors (C) according to BRCA1 status**, **Supplementary Table S2. Clinicopathological characteristics, BRCA1 mRNA expression, treatment, and follow-up events of patients with non-BRCA1-like or BRCA1-like tumors**, **Supplementary Table S3. 3-, 5-, 10-, and 15-year overall survival rate, distant recurrence-free survival rate, and cumulative incidence of second primary tumors according to BRCA1 status**, **Supplementary Table S4. 10- and 15-year overall survival rate, distant recurrence-free survival rate, and cumulative incidence of second primary tumors according to different levels of stromal tumor infiltrating lymphocytes and different BRCA1 status**, **Supplementary Table S5. 3-, 5-, 10-, and 15-year overall survival rate, distant recurrence-free survival rate, and cumulative incidence of second primary tumors according to BRCA1-like status**, **Supplementary Table S10.Univariable (subdistribution) hazard ratios according to BRCA1-like status **, and **Supplementary Table S11 (subdistribution) Hazard ratios according to BRCA1 status, based on cases with complete information**.
+
+## R code
+```{r load.libraries and functions, message=F, warning=F}
+library('readxl')
+library('ggplot2')
+library('plyr')
+library('dplyr')
+library('xtable')
+library('tidyr')
+library("stringr")
+library('lubridate')
+library('riverplot')
+library("survminer")
+library('survival')
+library("rms")
+library("cmprsk")
+library("tidyverse")
+library("mstate")
+library("VIM")
+library("table1")
+
+res_surv<-function(x, ntime=c(3, 5, 10, 15)){ 
+  surv.sum<-summary(x, times = ntime)
+  ncat<-length(surv.sum$n) #number of categories
+  for (i in 1:ncat){
+    #surv.df<-data.frame()
+    if (i == 1) {
+      time<-surv.sum$time[1 : length(ntime)*i] 
+      nrisk<-surv.sum$n.risk[1 : length(ntime)*i] 
+      nevent<-surv.sum$n.event[1 : length(ntime)*i] 
+      surv<-format(round(surv.sum$surv[1 : length(ntime)*i] * 100, 1), nsmall = 1)
+      lower<-format(round(surv.sum$lower[1 : length(ntime)*i] * 100, 1), nsmall = 1)
+      upper<-format(round(surv.sum$upper[1 : length(ntime)*i] * 100, 1), nsmall = 1)
+      survfinal1 <- paste0(surv, " (", lower, "-", upper, ")")
+      survgroup1<-cbind(time, nrisk, nevent, survfinal1)
+      surv.df<-survgroup1
+      next
+    }
+    time<-surv.sum$time[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] 
+    nrisk<-surv.sum$n.risk[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] 
+    nevent<-surv.sum$n.event[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] 
+    surv<-format(round(surv.sum$surv[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] * 100, 1), nsmall = 1)
+    lower<-format(round(surv.sum$lower[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] * 100, 1), nsmall = 1)
+    upper<-format(round(surv.sum$upper[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] * 100, 1), nsmall = 1)
+    survfinal <- paste0(surv, " (", lower, "-", upper, ")")
+    survgroup<-cbind(time, nrisk, nevent, survfinal)
+    surv.df<-rbind(surv.df, survgroup)
+  }
+  return(surv.df)
+}
+
+res_cuminc<-function(x, ntime=c(3, 5, 10, 15)){ 
+  surv.sum<-summary(x, times = ntime)
+  ncat<-length(surv.sum$n) #number of categories
+  for (i in 1:ncat){
+    if (i == 1) {
+      time<-surv.sum$time[1 : length(ntime)*i] 
+      nrisk<-round(surv.sum$n.risk[1 : length(ntime)*i], 0)#because of weighted number at risk
+      nevent<-surv.sum$n.event[1 : length(ntime)*i] 
+      surv<-format(round((1-surv.sum$surv[1 : length(ntime)*i]) * 100, 1), nsmall = 1)
+      lower<-format(round((1-surv.sum$upper[1 : length(ntime)*i]) * 100, 1), nsmall = 1)
+      upper<-format(round((1-surv.sum$lower[1 : length(ntime)*i]) * 100, 1), nsmall = 1)
+      survfinal1 <- paste0(surv, " (", lower, "-", upper, ")")
+      survgroup1<-cbind(time, nrisk, nevent, survfinal1)
+      surv.df<-survgroup1
+      next
+    }
+    time<-surv.sum$time[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] 
+    nrisk<-round(surv.sum$n.risk[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] , 0)
+    nevent<-surv.sum$n.event[(length(ntime)*(i-1) + 1) : (length(ntime)*i)] 
+    surv<-format(round((1-surv.sum$surv[(length(ntime)*(i-1) + 1) : (length(ntime)*i)]) * 100, 1), nsmall = 1)
+    lower<-format(round((1-surv.sum$upper[(length(ntime)*(i-1) + 1) : (length(ntime)*i)]) * 100, 1), nsmall = 1)
+    upper<-format(round((1-surv.sum$lower[(length(ntime)*(i-1) + 1) : (length(ntime)*i)]) * 100, 1), nsmall = 1)
+    survfinal <- paste0(surv, " (", lower, "-", upper, ")")
+    survgroup<-cbind(time, nrisk, nevent, survfinal)
+    surv.df<-rbind(surv.df, survgroup)
+  }
+  return(surv.df)
+}
+
+HRtable <- function(X) {
+  sum <- summary(X)
+  res <- format(round(sum$conf.int, 2), nsmall = 2)[, c(1, 3, 4)]
+  resbind <- paste0(res[, 1], " (", res[, 2], "-", res[, 3], ")")
+  resbindfinal <- cbind(rownames(res), resbind)
+  return(resbindfinal)
+}
+
+```
+
+```{r load.data, include=FALSE}
+TNBC<-read.csv("/DATA/users/yu.wang/7_BRCAness/long-term survival according to BRCA1 status/dataset/TNBC485_BRCA1statusupdate_in_August_2022.csv")
+TNBC$X<-NULL
+
+TNBC %>% plyr::count(., c("gBRCA1", "sBRCA1", "BPM"))
+
+TNBC <- TNBC %>%
+      mutate(BRCA1like = factor(BRCA1like, levels=c(0, 1), labels=c("non-BRCA1-like",  "BRCA1-like")),
+             tumorsize.cat2 = factor(tumorsize.cat2, levels=c(0, 1), labels=c("<=20mm",  ">20mm")),
+             Grade.cat2 = factor(Grade.cat2, levels=c(0, 1), labels=c("Grade 1 or 2",  "Grade 3")),
+             lym.vas.inv = factor(lym.vas.inv, levels=c(0, 1), labels=c("No LVI",  "LVI")),
+             Radiotherapy = factor(Radiotherapy, levels=c(0, 1), labels=c("No radiotherapy",  "Radiotherapy")),
+             Surgery.cat3 = factor(Surgery.cat3),
+             BRCA1BPM = ifelse(gBRCA1 == 0 & sBRCA1 == 0 & BPM == 0, 0,
+                               ifelse(gBRCA1 == 1, 1,
+                                      ifelse(gBRCA1 == 0 & sBRCA1 == 1, 2,
+                                             ifelse(BPM == 1 , 3, NA))))) %>%
+  #fix the BRCA1BPM, since 12 patients with BPM but NA in gBRCA1m or sBRCA1m should be consider as BPM
+               mutate(BRCA1BPM = ifelse(BPM == 1 & is.na(BRCA1BPM), 3, BRCA1BPM)) %>%
+               mutate(BRCA1BPM = factor(BRCA1BPM, levels = c(0, 1, 2, 3), 
+                                        labels = c("non-altered", "gBRCA1m", "sBRCA1m", "BPM")),
+                      dum.gBRCA1 = ifelse(BRCA1BPM == "gBRCA1m", 1, 0),
+                      dum.sBRCA1 = ifelse(BRCA1BPM == "sBRCA1m", 1, 0),
+                      dum.BPM = ifelse(BRCA1BPM == "BPM", 1, 0))
+```
+### Baseline characteristics
+
+```{r table 1_all patients}
+my.render.cat <- function(x){
+   c("", sapply(stats.default(x), function(y) with(y,
+        sprintf("%d (%0.0f %%)", FREQ, PCT)))) }
+
+my.render.cont <- function(x) {
+    with(stats.apply.rounding(stats.default(x), digits=3), c(
+        "Median (Q1-Q3)"=sprintf("%s (%s-%s)", MEDIAN, Q1, Q3))) }
+
+labels.tableBRCA1BPM <- list(
+  variables = list(T_LEEFT = "Age (years)",
+                   BRCA1like = "BRCA1-like tumor",
+                   sTILs_rescore_roberto = "sTILs (%)",
+                   tumorsize.cat2 = "Tumor size",
+                   Grade.cat2 = "Tumor grade",
+                   lym.vas.inv = "LVI",
+                   BRCA1RNA = "BRCA1 mRNA",
+                   Surgery.cat3 = "Surgery",
+                   Radiotherapy = "Radiotherapy"),
+  groups = list("", "BRCA1 stutus")
+)
+strata.tableBRCA1BPM <- c(list(Total = TNBC), split(TNBC, TNBC$BRCA1BPM))
+
+labels.tableBRCA1like <- list(
+  variables = list(T_LEEFT = "Age (years)",
+                   sTILs_rescore_roberto = "sTILs (%)",
+                   tumorsize.cat2 = "Tumor size",
+                   Grade.cat2 = "Tumor grade",
+                   lym.vas.inv = "LVI",
+                   BRCA1RNA = "BRCA1 mRNA",
+                   Surgery.cat3 = "Surgery",
+                   Radiotherapy = "Radiotherapy"),
+  groups = list("", "BRCA1-like")
+)
+strata.tableBRCA1like <- c(list(Total = TNBC), split(TNBC, TNBC$BRCA1like))
+
+#Table 2
+table1(strata.tableBRCA1BPM, labels.tableBRCA1BPM, groupspan=c(1, 4),
+        render.continuous = "Median (Q1-Q3)", render.categorical = "FREQ (PCTnoNA%)")
+
+#Table S2
+table1(strata.tableBRCA1like, labels.tableBRCA1like, groupspan=c(1, 2),
+        render.continuous = "Median (Q1-Q3)", render.categorical = "FREQ (PCTnoNA%)")
+```
+P-values for Table 2 was calculated as below:
+```{r test_BRCA1 status}
+pvalue.BRCA1BPM<-c(
+kruskal.test(TNBC$T_LEEFT, TNBC$BRCA1BPM)$p.value,
+kruskal.test(TNBC$sTILs_rescore_roberto, TNBC$BRCA1BPM)$p.value, 
+chisq.test(TNBC$tumorsize.cat2, TNBC$BRCA1BPM)$p.value,
+fisher.test(TNBC$Grade.cat2, TNBC$BRCA1BPM)$p.value,
+fisher.test(TNBC$hist_subtype.cat3, TNBC$BRCA1BPM)$p.value,
+fisher.test(TNBC$lym.vas.inv, TNBC$BRCA1BPM)$p.value,
+fisher.test(TNBC$BRCA1like, TNBC$BRCA1BPM)$p.value, 
+kruskal.test(TNBC$BRCA1RNA, TNBC$BRCA1BPM)$p.value,
+fisher.test(TNBC$Surgery.cat3, TNBC$BRCA1BPM)$p.value,
+chisq.test(TNBC$Radiotherapy, TNBC$BRCA1BPM)$p.value)
+pvalue.BRCA1BPM
+p.adjust(pvalue.BRCA1BPM, method="bonferroni")
+```
+
+P-values for Table S2 was calculated as below:
+```{r test_BRCA1like}
+pvalue.BRCA1like<-c(
+  kruskal.test(TNBC$T_LEEFT, TNBC$BRCA1like)$p.value,
+  kruskal.test(TNBC$sTILs_rescore_roberto, TNBC$BRCA1like)$p.value,
+  chisq.test(TNBC$tumorsize.cat2, TNBC$BRCA1like)$p.value,
+  chisq.test(TNBC$Grade.cat2, TNBC$BRCA1like)$p.value,
+  fisher.test(TNBC$hist_subtype.cat3, TNBC$BRCA1like)$p.value,
+  fisher.test(TNBC$lym.vas.inv, TNBC$BRCA1like)$p.value,
+  kruskal.test(TNBC$BRCA1RNA, TNBC$BRCA1like)$p.value,
+  fisher.test(TNBC$Surgery.cat3, TNBC$BRCA1like)$p.value,
+  chisq.test(TNBC$Radiotherapy, TNBC$BRCA1like)$p.value)
+pvalue.BRCA1like
+p.adjust(pvalue.BRCA1like, method="bonferroni")
+```
+
+```{r missingness, include=FALSE}
+tapply(TNBC$sTILs_rescore_roberto, is.na(TNBC$tBRCA1), summary)
+kruskal.test(TNBC$sTILs_rescore_roberto ~ is.na(TNBC$tBRCA1))#P=0.06903, missing BRCA1 had lower sTILs
+
+prop.table(table(TNBC$tumorsize.cat2, is.na(TNBC$tBRCA1)), 1)
+chisq.test(TNBC$tumorsize.cat2, is.na(TNBC$tBRCA1))#P=0.03477
+tapply(TNBC$tumorsize, is.na(TNBC$tBRCA1), summary)
+kruskal.test(TNBC$tumorsize~ is.na(TNBC$tBRCA1))#p-value = 0.0552
+
+table(TNBC$Grade.cat2, is.na(TNBC$tBRCA1))
+chisq.test(table(is.na(TNBC$tBRCA1), TNBC$Grade.cat2))#significant P value, more missing had lower tumor grade
+
+prop.table(table(TNBC$hist_subtype.cat3, is.na(TNBC$tBRCA1)), 1)
+fisher.test(table(is.na(TNBC$tBRCA1),TNBC$hist_subtype.cat3))#P=0.063, missing cases had more carcinoma NST and no metaplastic carcinoma
+fisher.test(table(is.na(TNBC$tBRCA1),TNBC$treatment.cat3))#not significant
+chisq.test(table(is.na(TNBC$tBRCA1),TNBC$lym.vas.inv))#not significant
+
+
+prop.table(table(TNBC$Grade.cat2, is.na(TNBC$BPM)), 1)
+chisq.test(table(is.na(TNBC$BPM), TNBC$Grade == "Grade 3"))#significant P value, more missing had lower tumor grade
+chisq.test(table(TNBC$tumorsize.cat2, is.na(TNBC$BPM)))#not significant
+kruskal.test(TNBC$sTILs_rescore_roberto ~ is.na(TNBC$BPM))#P=0.1074 
+chisq.test(table(is.na(TNBC$BPM),TNBC$treatment.cat3))#not significant
+fisher.test(table(is.na(TNBC$BPM),TNBC$hist_subtype.cat3))#not significant
+chisq.test(table(is.na(TNBC$BPM),TNBC$lym.vas.inv))#not significant
+
+
+prop.table(table(TNBC$Grade.cat2, is.na(TNBC$BRCA1like)), 1)
+chisq.test(table(is.na(TNBC$BRCA1like), TNBC$Grade == "Grade 3"))#significant P value, more missing had lower tumor grade
+prop.table(table(TNBC$tumorsize.cat2, is.na(TNBC$BRCA1like)), 1)
+chisq.test(table(TNBC$tumorsize.cat2, is.na(TNBC$BRCA1like)))#significant, more missing had smaller tumor
+kruskal.test(TNBC$sTILs_rescore_roberto ~ is.na(TNBC$BRCA1like))
+chisq.test(table(is.na(TNBC$BRCA1like),TNBC$treatment.cat3))
+prop.table(table(TNBC$hist_subtype.cat3, is.na(TNBC$BRCA1like)), 1)
+fisher.test(table(is.na(TNBC$BRCA1like),TNBC$hist_subtype.cat3))#significant, more missing had other subtypes
+chisq.test(table(is.na(TNBC$BRCA1like),TNBC$lym.vas.inv))
+```
+
+Table 2 also includes follow-up information. For the follow-up, we excluded women with confirmed germline BRCA2 mutations. This is because previous studies have shown that women with germline BRCA2 mutations had different outcomes compared to women with germline BRCA1 mutations. In addition, the number of women with germline BRCA2 mutations in our study was very low.
+```{r table 1_FUP info}
+TNBCsur <- TNBC %>%
+  filter(., BRCA2!="gBRCA2m" | is.na(BRCA2)) %>%
+  mutate(firstevent = ifelse(drfs15 == 0, "No events",
+                             ifelse(drfs15 == 1 & metastasis == 1, "First distant recurrence",
+                                    ifelse(drfs15 == 1 & metastasis == 0, "only death",
+                                           ifelse(drfs15 == 2, "First second primary tumors", NA)))),
+         location_SPT = ifelse(drfs15 == 2 & first.tumor.TOPOG_CBC == "CBC", "Contralateral breast",
+                               ifelse(drfs15 == 2 & first.tumor.TOPOG_CBC == "IBC", "Ipsilatera breast",
+                                      ifelse(drfs15 == 2 & first.tumor.TOPOG_CBC == "ovarian cancer", "Overy",
+                                             ifelse(drfs15 == 2 & first.tumor.TOPOG_CBC %in% c("colon cencer", "lung cancer", "other cancers"), "Other locations", NA))))) %>%
+  mutate(death15 = factor(death15))
+dim(TNBCsur)
+
+labels.tableFUPBRCA1BPM <- list(
+  variables = list(death15 = "Death",
+                   firstevent = "First event",
+                   location_SPT = "The location of first SPT"),
+  groups = list("", "BRCA1 stutus")
+)
+strata.tableFUPBRCA1BPM <- c(list(Total = TNBCsur), split(TNBCsur, TNBCsur$BRCA1BPM))
+
+labels.tableFUPBRCA1like <- list(
+  variables = list(death15 = "Death",
+                   firstevent = "First event",
+                   location_SPT = "The location of first SPT"),
+  groups = list("", "BRCA1-like")
+)
+strata.tableFUPBRCA1like <- c(list(Total = TNBCsur), split(TNBCsur, TNBCsur$BRCA1like))
+
+table1(strata.tableFUPBRCA1BPM, labels.tableFUPBRCA1BPM, groupspan=c(1, 4),
+        render.categorical = "FREQ (PCT%)")
+
+table1(strata.tableFUPBRCA1like, labels.tableFUPBRCA1like, groupspan=c(1, 2),
+        render.categorical = "FREQ (PCT%)")
+```
+Note that women with missing in the second primary tumor locations were the women witout second primary tumors during the follow-up.
+
+### Survival and cumulative incidence
+
+#### BRCA1 status
+```{r BRCA1status survival dataprep}
+TNBCsur <- TNBCsur %>%
+  mutate(sTILs.cat2 = ifelse(sTILs_rescore_roberto >= 50, "sTILs>=50", "sTILs<50"),
+         tumorsize.cat3 = ifelse(tumorsize.cat %in% c("1A", "1B"), "1a/b",
+                                 ifelse(tumorsize.cat == "1C", "1C",
+                                        ifelse(tumorsize.cat %in% c("2", "3"), "2/3", NA))))
+TNBCsurw15 <- crprep(Tstop="time15.drfs", status="drfs15", trans=c(1,2), cens=0, id="palga_nr",
+              keep = c("BPM","gBRCA1","BRCA1like","BRCA1BPM","sTILs","tumorsize.cat2","Grade.cat2",
+                     "lym.vas.inv","hist_subtype.cat3", "treatment.cat3", "sTILs.cat2",
+                     "dum.gBRCA1", "dum.sBRCA1", "dum.BPM"),
+              data = TNBCsur)
+
+TNBCsurw15.meta <- TNBCsurw15 %>%
+  filter(failcode == 1)
+
+TNBCsurw15.spt <- TNBCsurw15 %>%
+  filter(failcode == 2)
+```
+
+The codes below return results from Supplementary Table S3.
+```{r TableS3 outcomes according to BRCA1status}
+#OS
+os_BRCA1BPM <- survfit(Surv(time15, death15 == 1)~ BRCA1BPM , data=TNBCsur)
+summary(os_BRCA1BPM, times = c(3, 5, 10, 15))
+#pariwise excluding patients with sBRCA1m since the number of patients with sBRCA1m was too small
+pairwise_survdiff(Surv(time15, death15 == 1)~ BRCA1BPM , data=filter(TNBCsur, TNBCsur$BRCA1BPM != "sBRCA1m"), p.adjust.method = "BH")
+pairwise_survdiff(Surv(time15, death15 == 1)~ BRCA1BPM , data=filter(TNBCsur, TNBCsur$BRCA1BPM != "sBRCA1m"), p.adjust.method = "none")
+
+#DRFS
+drfs_BRCA1BPM <- survfit(Surv(time15.drfs, drfs15 == 1) ~ BRCA1BPM, data=TNBCsur)
+summary(drfs_BRCA1BPM, times = c(3, 5, 10, 15))
+pairwise_survdiff(Surv(time15.drfs, drfs15 == 1)~ BRCA1BPM , data=filter(TNBCsur, TNBCsur$BRCA1BPM != "sBRCA1m"), p.adjust.method = "BH")
+pairwise_survdiff(Surv(time15.drfs, drfs15 == 1)~ BRCA1BPM , data=filter(TNBCsur, TNBCsur$BRCA1BPM != "sBRCA1m"), p.adjust.method = "none")
+
+#SPT
+sf.cpr.metastasis.BRCA1BPM <-survfit(Surv(Tstart, Tstop, status==1) ~ BRCA1BPM, data=TNBCsurw15.meta, weights = weight.cens)
+sf.cpr.SPT.BRCA1BPM <-survfit(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM, data=TNBCsurw15.spt, weights = weight.cens)
+summary(sf.cpr.SPT.BRCA1BPM, times = c(3, 5, 10, 15))
+cuminc(TNBCsur$time15.drfs, TNBCsur$drfs15, TNBCsur$BRCA1BPM, cencode = 0, na.action=na.omit)$Test
+
+#first compute the p-values of two groups comparison then use p.adjust for correction
+gBRCA1nonalter <- filter(TNBCsur, TNBCsur$BRCA1BPM %in% c("gBRCA1m", "non-altered"))
+gBRCA1BPM <- filter(TNBCsur, TNBCsur$BRCA1BPM %in% c("gBRCA1m", "BPM"))
+BPMnonalter <- filter(TNBCsur, TNBCsur$BRCA1BPM %in% c("BPM", "non-altered"))
+
+#BH ajusted
+round(p.adjust(c(
+  cuminc(gBRCA1nonalter$time15.drfs, gBRCA1nonalter$drfs15, gBRCA1nonalter$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2],
+  cuminc(gBRCA1BPM$time15.drfs, gBRCA1BPM$drfs15, gBRCA1BPM$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2],
+  cuminc(BPMnonalter$time15.drfs, BPMnonalter$drfs15, BPMnonalter$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2]), 
+method = "BH"), 3)
+#non adjusted
+round(p.adjust(c(
+  cuminc(gBRCA1nonalter$time15.drfs, gBRCA1nonalter$drfs15, gBRCA1nonalter$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2],
+  cuminc(gBRCA1BPM$time15.drfs, gBRCA1BPM$drfs15, gBRCA1BPM$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2],
+  cuminc(BPMnonalter$time15.drfs, BPMnonalter$drfs15, BPMnonalter$BRCA1BPM, cencode = 0, na.action=na.omit)$Test[2,2]), 
+method = "none"), 3)       
+```
+Note that the results from second primary tumors were the survival rate instead of the incidence rate. 
+
+```{r surv res BRCA1status, include=FALSE}
+pairwise_survdiff(Surv(time15, death15 == 1) ~ BRCA1BPM, data=TNBCsur)
+pairwise_survdiff(Surv(time15.drfs, drfs15 == 1) ~ BRCA1BPM, data=TNBCsur)
+cuminc(TNBCsur$time15.drfs, TNBCsur$drfs15, TNBCsur$BRCA1BPM, cencode = 0)[["Tests"]]
+BRCA1BPM.survtable <-
+  cbind(res_surv(os_BRCA1BPM), res_surv(drfs_BRCA1BPM), res_cuminc(sf.cpr.SPT.BRCA1BPM)) %>%
+  as_data_frame() %>%
+  mutate(new_col = c(rep("BRCA1 non-altered", 4),
+                         rep("gBRCA1m", 4),
+                         rep("sBRCA1m", 4),
+                         rep("tumor BRCA1-PM", 4)), .before = time)
+names(BRCA1BPM.survtable) <- c("BRCA1status", rep(c("times", "nrisk", "nevent", "estimate"), 3))
+```
+
+The codes below return results from Figure 3.
+```{r BRCA1BPM plots prep}
+list_of_plots_BRCA1BPM <- list()
+list_of_plots_BRCA1BPM[[1]] <- ggsurvplot(os_BRCA1BPM, data=TNBCsur, risk.table=T, fun = "pct",
+                                          pval = F, conf.int = F,
+                                           palette = c("#009F81","#FFC33B",  "#008DF9", "#9F0162"),
+                                           xlim = c(0,15), ylim = c(0, 100),
+                                           xlab = "Time (years)", break.time.by = 5,
+                                           risk.table.height = 0.2,risk.table.y.text = F,
+                                           risk.table.col ="strata",
+                                           conf.int.style = "step", ncensor.plot = F,
+                                           legend.labs = c("BRCA1-non-altered", "gBRCA1m", "sBRCA1m", "tumor BRCA1-PM"),
+                                           legend.title = "",
+                                           font.legend = c(13, "italic"),
+                                           font.y = c(13, "bold"),
+                                           ggtheme = theme_classic(base_size = 13),                                          
+                                           ylab = "Overall survival (%)")
+
+list_of_plots_BRCA1BPM[[2]] <- ggsurvplot(drfs_BRCA1BPM, data=TNBCsur, risk.table=T, fun = "pct",
+                                          pval = F, conf.int = F,
+                                          palette = c("#009F81","#FFC33B",  "#008DF9", "#9F0162"),
+                                          xlim = c(0,15), ylim = c(0, 100),
+                                          xlab = "Time (years)", break.time.by = 5,
+                                          risk.table.height = 0.2, risk.table.y.text = F,
+                                          risk.table.col ="strata",
+                                          conf.int.style = "step", ncensor.plot = F,
+                                          legend.labs = c("BRCA1-non-altered", "gBRCA1m", "sBRCA1m", "tumor BRCA1-PM"),
+                                          legend.title = "",
+                                          font.legend = c(13, "italic"),
+                                          font.y = c(13, "bold"),
+                                          ggtheme = theme_classic(base_size = 13),
+                                          ylab="Distant recurrence-free survival (%)")
+
+list_of_plots_BRCA1BPM[[3]] <-  ggsurvplot(sf.cpr.SPT.BRCA1BPM, data=TNBCsurw15.spt, risk.table=T, 
+                                 conf.int = F, fun = function(y) (1-y)*100, 
+                                 palette = c("#009F81","#FFC33B",  "#008DF9", "#9F0162"),
+                                 xlim = c(0,15), ylim = c(0, 100), 
+                                 xlab = "Time (years)", break.time.by = 5,
+                                 risk.table.height = 0.20, risk.table.y.text = F,
+                                 risk.table.col ="strata",
+                                 conf.int.style = "step", ncensor.plot = F,
+                                 legend.labs = c("BRCA1-non-altered", "gBRCA1m", "sBRCA1m", "tumor BRCA1-PM"),
+                                 legend.title = "",
+                                 font.legend = c(13, "italic"),
+                                 font.y = c(13, "bold"),
+                                 ggtheme = theme_classic(base_size = 13),
+                                 ylab="Cumulative incidence of second primary tumors (%)")                                 
+
+list_of_plots_BRCA1BPM[[1]]$plot <- list_of_plots_BRCA1BPM[[1]]$plot + labs(tag = "A")
+list_of_plots_BRCA1BPM[[2]]$plot <- list_of_plots_BRCA1BPM[[2]]$plot + labs(tag = "B")
+list_of_plots_BRCA1BPM[[3]]$plot <- list_of_plots_BRCA1BPM[[3]]$plot + labs(tag = "C")
+```
+
+```{r Figure 3, fig.width=15, fig.height=15}
+plot_combined <- arrange_ggsurvplots(list_of_plots_BRCA1BPM, nrow = 2, ncol = 2,  risk.table.height = 0.25)
+```
+
+
+```{r save the plot, include=FALSE}
+# setwd("/DATA/users/yu.wang/7_BRCAness/long-term survival according to BRCA1 status/results/Plots")
+# pdf("combined_plot_BRCA1status.pdf", width = 15, height = 15)
+# arrange_ggsurvplots(list_of_plots_BRCA1BPM, nrow = 2, ncol = 2,  risk.table.height = 0.25)
+# dev.off()
+```
+
+#### BRCA1 status by sTILs levels
+The codes below return results from Supplementary Table S4.
+```{r tableS4 sTILs and BRCA1 status}
+table(TNBCsur$BRCA1BPM, TNBCsur$sTILs.cat2)
+os_BRCA1BPM_sTILs <- survfit(Surv(time15, death15 == 1)~ BRCA1BPM + sTILs.cat2 , data=TNBCsur)
+summary(os_BRCA1BPM_sTILs, times = c(0, 10, 15))
+
+drfs_BRCA1BPM_sTILs <- survfit(Surv(time15.drfs, drfs15 == 1)~ BRCA1BPM + sTILs.cat2 , data=TNBCsur)
+summary(drfs_BRCA1BPM_sTILs, times = c(0, 10, 15))
+
+sf.cpr.SPT.BRCA1BPM_sTILs <-survfit(Surv(Tstart, Tstop, status==2) ~ BRCA1BPM + sTILs.cat2, data=TNBCsurw15.spt, 
+                              weights = weight.cens)
+summary(sf.cpr.SPT.BRCA1BPM_sTILs, times = c(0, 10, 15))
+```
+
+```{r survres_BRCA1sTILs, include=FALSE}
+res_os_BRCA1BPM_sTILs <- res_surv(os_BRCA1BPM_sTILs)[c(3, 4, 7, 8, 11, 12, 15, 16, 19, 20, 23, 24, 27, 28, 31, 32),]
+
+res_drfs_BRCA1BPM_sTILs <- res_surv(drfs_BRCA1BPM_sTILs)[c(3, 4, 7, 8, 11, 12, 15, 16, 19, 20, 23, 24, 27, 28, 31, 32),]
+
+res_sf.cpr.SPT.BRCA1BPM_sTILs <- res_cuminc(sf.cpr.SPT.BRCA1BPM_sTILs)[c(3, 4, 7, 8, 11, 12, 15, 16, 19, 20, 23, 24, 27, 28, 31, 32),]
+
+BRCA1BPM.sTILs.survtable <-
+   cbind(res_os_BRCA1BPM_sTILs, res_drfs_BRCA1BPM_sTILs, res_sf.cpr.SPT.BRCA1BPM_sTILs) %>%
+  as_tibble(.) %>%
+  dplyr::select(1:4, 6:8, 10:12) %>%
+  mutate(new_col = c(rep("BRCA1 non-altered sTILs<50", 2),
+                     rep("BRCA1 non-altered sTILs>=50", 2),
+                         rep("gBRCA1m sTILs<50", 2),
+                     rep("gBRCA1m sTILs>=50", 2),
+                         rep("sBRCA1m sTILs<50", 2),
+                     rep("sBRCA1m sTILs>=50", 2),
+                     rep("tumor BRCA1-PM sTILs<50", 2),
+                         rep("tumor BRCA1-PM sTILs>=50", 2)), .before = time)
+names(BRCA1BPM.sTILs.survtable) <- c("group","times", "OSrisk", "OSevent", "OS", "DRFSrisk", "DRFSevent", "DRFS",
+                                     "SPTrisk", "SPTevent", "SPT")
+```
+
+#### BRCA1-like status
+The codes below return results from Supplementary Table S5.
+```{r r TableS5 outcomes according to BRCA1status}
+os_BRCA1like<-survfit(Surv(time15, death15 == 1)~ BRCA1like , data=TNBCsur)
+summary(os_BRCA1like, times = c(3, 5, 10, 15))
+
+drfs_BRCA1like<-survfit(Surv(time15.drfs, drfs15==1)~ BRCA1like , data=TNBCsur)
+summary(drfs_BRCA1like, times = c(3, 5, 10, 15))
+
+sf.cpr.SPT.BRCA1like <-survfit(Surv(Tstart, Tstop, status==2) ~ BRCA1like, data=TNBCsurw15.spt, weights = weight.cens)
+summary(sf.cpr.SPT.BRCA1like, times = c(3, 5, 10, 15))
+```
+
+```{r surv res BRCA1like, include=FALSE}
+BRCA1like.survtable <-
+  cbind(res_surv(os_BRCA1like), res_surv(drfs_BRCA1like), res_cuminc(sf.cpr.SPT.BRCA1like)) %>%
+  as_data_frame() %>%
+  mutate(new_col = c(rep("non-BRCA1-like", 4),
+                         rep("BRCA1-like", 4)), .before = time)
+names(BRCA1like.survtable) <- c("BRCA1like", rep(c("times", "nrisk", "nevent", "estimate"), 3))
+```
+
+
+
+### Regression models according to BRCA1 status
+The codes below return results from Supplementary Table S11.
+
+#### Overall survival according to BRCA1 status
+```{r OS_BRCA1 status}
+cox.zph(coxph(Surv(time15, death15 == 1) ~ BRCA1BPM, data = TNBCsur), terms = F)
+#gBRCA1 violates the PH assumpti
+plot(cox.zph(coxph(Surv(time15, death15 == 1) ~ BRCA1BPM, data = TNBCsur), terms = F))
+#break should be at 3 years
+TNBCsur_os_episode <- survSplit(Surv(time15, death15==1)~. , data= TNBCsur,
+                           cut=c(3), id="id", episode = "episode")
+
+
+os.uni.BRCA1BPM<- coxph(Surv(tstart, time15, event) ~ 
+                          dum.gBRCA1:strata(episode) + dum.sBRCA1 + dum.BPM, data = TNBCsur_os_episode) 
+summary(os.uni.BRCA1BPM)
+HRtable(os.uni.BRCA1BPM)
+
+#check interaction terms
+os.mod.check <- coxph(Surv(tstart, time15, event) ~  
+                  dum.gBRCA1:strata(episode) + dum.sBRCA1 + dum.BPM + sTILs + tumorsize.cat2 + 
+                  Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3 +
+                  dum.BPM:sTILs + dum.gBRCA1:sTILs + dum.sBRCA1:sTILs, data=TNBCsur_os_episode)
+summary(os.mod.check)
+#only the interaction term between dum.BPM and sTILs was significant
+
+os.multi.BRCA1BPM <- coxph(Surv(tstart, time15, event) ~  
+                  dum.gBRCA1:strata(episode) + dum.sBRCA1 + dum.BPM + sTILs + tumorsize.cat2 + 
+                  Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3 +
+                  dum.BPM:sTILs, data=TNBCsur_os_episode)
+cox.zph(os.multi.BRCA1BPM)#allgood
+summary(os.multi.BRCA1BPM)
+HRtable(os.multi.BRCA1BPM)
+vif(os.multi.BRCA1BPM)#all < 2
+```
+Add second primary tumor as a time-varing event.
+```{r OS with SPT}
+TNBCsur_SPT <- survSplit(Surv(time, death)~. , data= TNBCsur,
+                                  cut=c(15), id="id", episode = "episode") %>%
+  filter(episode == 1) %>%
+  dplyr::select(-id, -episode) %>%
+  mutate(first.tumor.incdat = as.Date(first.tumor.incdat, format = "%Y-%m-%d"),
+         SPT.inc15 = first.tumor.incdat,
+         incdat = as.Date(incdat, format = "%Y-%m-%d"),
+         VITDAT.final = as.Date(VITDAT.final, format="%Y-%m-%d")) %>%
+  mutate(SPT.inc15 = ifelse((first.tumor.incdat - incdat)/365.25 <= 15, SPT.inc15, NA)) %>%
+  mutate(SPT.inc15 = as.Date(SPT.inc15, origin = "1970-01-01"))
+
+secondprim <- with(TNBCsur_SPT, data.frame(palga_nr = palga_nr,
+                                    time=time,
+                                    second.prim.time= ifelse(SPT.inc15== VITDAT.final,
+                                                             (SPT.inc15 - incdat)/365.25 - 0.1,
+                                                             (SPT.inc15 - incdat)/365.25),
+                                    death = death))
+
+TNBCsur_SPT <- tmerge(TNBCsur_SPT, secondprim, id=palga_nr,
+                 death = event(time, death),
+                 secondtumor = tdc(second.prim.time),
+                 options= list(idname="palga_nr"))
+# TNBCsur_SPT[c(1:20), c("palga_nr", "tstart", "tstop","secondtumor")]
+
+TNBCsur_SPT_cutoff3 <- survSplit(Surv(tstart, tstop, death)~. , data= TNBCsur_SPT,
+                 cut=c(3), id="id", episode = "episode")
+
+os.multi.BRCA1BPM.SPT <- coxph(Surv(tstart, tstop, death) ~ 
+                                 dum.gBRCA1:strata(episode) + dum.BPM + dum.sBRCA1 + 
+                                 sTILs + tumorsize.cat2 + Grade.cat2 + 
+                    hist_subtype.cat3 + lym.vas.inv + treatment.cat3 + secondtumor +
+                      dum.BPM:sTILs, data=TNBCsur_SPT_cutoff3, cluster = palga_nr)
+cox.zph(os.multi.BRCA1BPM.SPT, terms = F)#good
+HRtable(os.multi.BRCA1BPM.SPT)
+
+vif(os.multi.BRCA1BPM.SPT)#all < 2
+```
+
+#### DRFS according to BRCA1 status
+```{r DRFS}
+DRFS.uni.BRCA1BPM <- coxph(Surv(time15.drfs, drfs15==1) ~ dum.gBRCA1 + dum.sBRCA1 + dum.BPM, data=TNBCsur)
+cox.zph(DRFS.uni.BRCA1BPM, terms = F)#Good
+HRtable(DRFS.uni.BRCA1BPM)
+
+DRFS.multi.check <- coxph(Surv(time15.drfs, drfs15==1) ~ 
+                      dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs  + 
+                      tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3 +
+                      dum.gBRCA1:sTILs + dum.sBRCA1:sTILs + dum.BPM: sTILs, data=TNBCsur)
+HRtable(DRFS.multi.check)
+summary(DRFS.multi.check)
+
+DRFS.multi.BRCA1BPM <- coxph(Surv(time15.drfs, drfs15==1) ~ 
+                      dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs  + 
+                      tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3, data=TNBCsur)
+HRtable(DRFS.multi.BRCA1BPM)
+summary(DRFS.multi.BRCA1BPM)
+cox.zph(DRFS.multi.BRCA1BPM, terms = F)
+vif(DRFS.multi.BRCA1BPM)#all < 1.5
+```
+
+
+```{r SPT fine and gray}
+SPT.uni.BRCA1BPM.fg <- coxph(Surv(Tstart, Tstop, status==2) ~ dum.gBRCA1 + dum.sBRCA1 + dum.BPM, weights=weight.cens, data=TNBCsurw15.spt)
+cox.zph(SPT.uni.BRCA1BPM.fg, terms = F)#Good
+HRtable(SPT.uni.BRCA1BPM.fg)
+
+SPT.multi.BRCA1BPM.fg.check <- coxph(Surv(Tstart, Tstop, status==2) ~ 
+                               dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs  + 
+                               tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3 +
+                               dum.gBRCA1:sTILs + dum.sBRCA1:sTILs + dum.BPM:sTILs, 
+                               weights = weight.cens, data=TNBCsurw15.spt)
+HRtable(SPT.multi.BRCA1BPM.fg.check)
+
+SPT.multi.BRCA1BPM.fg <- coxph(Surv(Tstart, Tstop, status==2) ~ 
+                               dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs  + 
+                               tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3, 
+                               weights = weight.cens, data=TNBCsurw15.spt)
+HRtable(SPT.multi.BRCA1BPM.fg)
+```
+
+
+```{r SPT cause-specific}
+SPT.uni.BRCA1BPM.cs <- coxph(Surv(time15.drfs, drfs15==2) ~ dum.gBRCA1 + dum.sBRCA1 + dum.BPM, data=TNBCsur)
+cox.zph(SPT.uni.BRCA1BPM.cs, terms = F)#Good
+HRtable(SPT.uni.BRCA1BPM.cs)
+
+SPT.multi.BRCA1BPM.cs.check <- coxph(Surv(time15.drfs, drfs15==2) ~ 
+                               dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs +
+                               tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3 +
+                              dum.gBRCA1:sTILs + dum.sBRCA1:sTILs + dum.BPM:sTILs, data=TNBCsur)
+HRtable(SPT.multi.BRCA1BPM.cs.check)
+
+SPT.multi.BRCA1BPM.cs <- coxph(Surv(time15.drfs, drfs15==2) ~ 
+                               dum.gBRCA1 + dum.sBRCA1 + dum.BPM + sTILs +
+                               tumorsize.cat2 + Grade.cat2 + hist_subtype.cat3 + lym.vas.inv + treatment.cat3,
+                               data=TNBCsur)
+
+
+cox.zph(SPT.multi.BRCA1BPM.cs)
+vif(SPT.multi.BRCA1BPM.cs)#all < 1.5
+HRtable(SPT.multi.BRCA1BPM.cs)
+```
+
+### Regression models according to BRCA1-like status
+The codes below return results from Supplementary Table S10.
+```{r outcomes according to BRCA1like}
+cox.zph(coxph(Surv(time15, death15==1) ~ BRCA1like, data=TNBCsur))#PH
+os.uni.BRCA1like<-coxph(Surv(time15, death15==1) ~ BRCA1like, data=TNBCsur)
+os.uni.BRCA1like.sum <- summary(os.uni.BRCA1like)
+round(os.uni.BRCA1like.sum$conf.int, 2)[, c(1, 3, 4)]
+
+
+DRFS.uni.BRCA1like <- coxph(Surv(time15.drfs, drfs15==1) ~ BRCA1like, data=TNBCsur)
+cox.zph(DRFS.uni.BRCA1like)#Good
+DRFS.uni.BRCA1like.sum<-summary(DRFS.uni.BRCA1like)
+round(DRFS.uni.BRCA1like.sum$conf.int, 2)[, c(1, 3, 4)]
+
+
+SPT.uni.BRCA1like <- coxph(Surv(Tstart, Tstop, status==2) ~ BRCA1like, weights=weight.cens, data=TNBCsurw15.spt)
+cox.zph(SPT.uni.BRCA1like)#OK
+SPT.uni.BRCA1like.sum<-summary(SPT.uni.BRCA1like)
+round(SPT.uni.BRCA1like.sum$conf.int, 2)[, c(1, 3, 4)]
+
+SPT.uni.BRCA1like.cs <- coxph(Surv(time15.drfs, drfs15==2) ~ BRCA1like, data=TNBCsur)
+cox.zph(SPT.uni.BRCA1like.cs)#Good
+SPT.uni.BRCA1like.cs.sum<-summary(SPT.uni.BRCA1like.cs)
+round(SPT.uni.BRCA1like.cs.sum$conf.int, 2)[, c(1, 3, 4)]
+```
+## Session information
+```{r sinfo}
+sessionInfo()
+```
